@@ -1,35 +1,56 @@
 
-name: Build Alsaer APK
+name: Build Alsaer V2 APK
 
 on:
   push:
     branches:
       - main
+      - v2-replacement
+    paths:
+      - 'alsaer-v2-with-admin-preview.zip'
+      - '.github/workflows/build-apk.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: alsaer-v2-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    name: Build Android APK
+    name: Build Android V2 Test APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Verify project archive
+      - name: Extract V2 project
         run: |
-          test -f alsaer-project-hardened.zip
-          unzip -t alsaer-project-hardened.zip
-
-      - name: Extract project
-        run: |
+          test -f alsaer-v2-with-admin-preview.zip
+          unzip -t alsaer-v2-with-admin-preview.zip
           mkdir -p source
-          unzip -q alsaer-project-hardened.zip -d source
-          test -f source/tawba-apk/package.json
-          test -f source/tawba-apk/capacitor.config.json
+          unzip -q alsaer-v2-with-admin-preview.zip -d source
+          test -f source/alsaer-v2-repaired/tawba-apk/package.json
+          test -f source/alsaer-v2-repaired/tawba-apk/capacitor.config.json
+          test -f source/alsaer-v2-repaired/tawba-apk/www/index.html
+
+      - name: Verify JavaScript
+        working-directory: source/alsaer-v2-repaired/tawba-apk
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path('www/index.html').read_text(encoding='utf-8')
+          scripts = re.findall(r'<script[^>]*>(.*?)</script>', html, re.S | re.I)
+          if not scripts:
+              raise SystemExit('No inline JavaScript found')
+          Path('/tmp/alsaer-inline.js').write_text(scripts[0], encoding='utf-8')
+          PY
+          node --check /tmp/alsaer-inline.js
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -43,35 +64,32 @@ jobs:
           java-version: '17'
 
       - name: Install dependencies
-        working-directory: source/tawba-apk
-        run: npm install
+        working-directory: source/alsaer-v2-repaired/tawba-apk
+        run: npm install --no-audit --no-fund
 
       - name: Add Android platform
-        working-directory: source/tawba-apk
+        working-directory: source/alsaer-v2-repaired/tawba-apk
         run: npx cap add android
 
-      - name: Generate app icons
-        working-directory: source/tawba-apk
-        run: |
-          npx capacitor-assets generate --android \
-            --iconBackgroundColor '#0e6a62' \
-            --iconBackgroundColorDark '#0a3d3a'
+      - name: Generate Android icons
+        working-directory: source/alsaer-v2-repaired/tawba-apk
+        run: npx capacitor-assets generate --android --iconBackgroundColor '#0e6a62' --iconBackgroundColorDark '#0a3d3a'
 
       - name: Sync Capacitor
-        working-directory: source/tawba-apk
+        working-directory: source/alsaer-v2-repaired/tawba-apk
         run: npx cap sync android
 
       - name: Build Debug APK
-        working-directory: source/tawba-apk
+        working-directory: source/alsaer-v2-repaired/tawba-apk
         run: |
           chmod +x android/gradlew
           cd android
-          ./gradlew assembleDebug
+          ./gradlew --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: alsaer-ila-allah-apk
-          path: source/tawba-apk/android/app/build/outputs/apk/debug/app-debug.apk
+          name: alsaer-v2-test-apk
+          path: source/alsaer-v2-repaired/tawba-apk/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
